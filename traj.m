@@ -75,7 +75,7 @@ classdef traj < handle
             
             % Compute distance matrix
             this.D=zeros(size(this.projs,2));
-            distFun=@(x1,x2)log(sqrt(sum((x1-x2).^2)));
+            distFun=@(x1,x2)sqrt(sum((x1-x2).^2));
             for currFC1=1:size(this.projs,2)
                 for currFC2=currFC1+1:size(this.projs,2)
                     this.D(currFC1,currFC2)=distFun(this.projs(:,currFC1),this.projs(:,currFC2));
@@ -124,288 +124,184 @@ classdef traj < handle
             BAcc=BAccFun(this.lbls,lblsEst);
         end
         
-        function BAcc=CFDclassification(this)
-            % First, compute centroid function distance
-            cellProjs=mat2cell(this.projs,size(this.projs,1),ones(this.nSubjs,1)*this.seqLength);
-            CFD=cellfun(@(x)normalize(sqrt(sum((x-repmat(mean(x,2),1,size(x,2))).^2))),cellProjs,'UniformOutput',0);
-            CFD=real(cat(1,CFD{:}));
+        function BAcc=HMMclassification(this)
+%             % Demean projections, compress outliers and compute PCA
+%             dProjs=this.projs-repmat(mean(this.projs,2),1,size(this.projs,2));
+%             cProjs=atan(dProjs./repmat(3*mad(dProjs,1,2),1,size(this.projs,2))).*repmat(mad(dProjs,1,2),1,size(this.projs,2))*3;
+%             [~,score]=pca(cProjs');
             
-            % Trajectory segmentation
-            nSamples=3;
-            trajBreak=cell(size(CFD,1),1);
-            trajBreakMat=zeros(size(CFD));
-            d=zeros(size(CFD));
-            for currSubj=1:size(CFD,1)
-                for currT=1:size(CFD,2)-2*nSamples
-                    x=CFD(currSubj,currT:currT+2*nSamples-1);
-                    mu1=mean(x(1:nSamples));
-                    mu2=mean(x(nSamples+1:end));
-                    mu3=mean(x);
-                    sigma1=std(x(1:nSamples));
-                    sigma2=std(x(nSamples+1:end));
-                    sigma3=std(x);
-                    L0=1/sqrt(2*pi)*sigma3*exp(-(x-mu3).^2/(2*sigma3^2));
-                    L1=1/sqrt(2*pi)*sigma1*sigma2*exp(-((x-mu1).^2/(2*sigma1^2)+(x-mu2).^2/(2*sigma2^2)));
-                    d(currSubj,currT+nSamples)=-log(L0/L1);
-                end
-                [~,trajBreak{currSubj}]=findpeaks(d(currSubj,:),'MinPeakDistance',2,'MinPeakProminence',.10*max(d(currSubj,:)));
-                trajBreakMat(currSubj,trajBreak{currSubj})=1;
-                trajBreakMat(currSubj,1)=1;
-            end
-            subTrajLbls=reshape(cumsum(reshape(trajBreakMat',[],1)),size(CFD,2),size(CFD,1))';
-
-%             % Compute transition matrix, prior and distribution stats for
-%             % each class
-%             for currSubj=1:size(CFD,1)         
-%                 % Warning: the following block of code is for testing the
-%                 % rest of the algorithm, and it actually overwrites data
-%                 % with a phantom
-%                 for currState=1:max(max(subTrajLbls))
-%                     CFD(subTrajLbls==currState)=randn(sum(subTrajLbls==currState,'all'),1)*30+currState;
+            % Compute distance matrix on smaller number of dimensions
+            nDims=6;
+%             distFun=@(x1,x2)sqrt(sum((x1-x2).^2));
+%             DlowD=zeros(size(score,1));
+%             for currX1=1:size(score,1)
+%                 for currX2=currX1+1:size(score,1)
+%                     DlowD(currX1,currX2)=distFun(score(currX1,1:nDims),score(currX2,1:nDims));
+%                     DlowD(currX2,currX1)=DlowD(currX1,currX2);
 %                 end
-%                 sameClassIdx=setdiff(find(this.lbls==this.lbls(currSubj)),currSubj);
-%                 sameClassIdx=sameClassIdx(randperm(length(sameClassIdx)));
-%                 CFD(currSubj,:)=CFD(sameClassIdx(1),:);
-                
-%                 for currClass=1:2
-%                     % Recovere indexes of subject in classes, excluding test
-%                     % subject
-%                     relDataIdx=this.lbls==(currClass-1);
-%                     relDataIdx(currSubj)=0;
-%                     
-%                     % Compute distribution stats for each subtraj
-%                     subTrajVals=unique(subTrajLbls(relDataIdx,:));
-%                     nSubtraj=length(subTrajVals);
-%                     HMM(currClass).mu=zeros(nSubtraj,1);
-%                     HMM(currClass).sigma=zeros(nSubtraj,1);
-%                     for currSubtraj=1:nSubtraj
-%                         HMM(currClass).mu(currSubtraj)=mean(CFD(subTrajLbls==subTrajVals(currSubtraj)));
-%                         HMM(currClass).sigma(currSubtraj)=std(CFD(subTrajLbls==subTrajVals(currSubtraj)));
-%                     end
-%                     HMM(currClass).states=subTrajVals;
-%                     
-%                     % Compute prior probability of each state (very rough, it
-%                     % is just inverse of number of states)
-%                     HMM(currClass).prior=ones(nSubtraj,1)/nSubtraj;
-%                     
-%                     % Compute transition matrix
-%                     HMM(currClass).transMat=zeros(nSubtraj);
-%                     relSubjs=find(relDataIdx);
-%                     for currSubj2=1:sum(relDataIdx)
-%                         for currT=2:size(subTrajLbls,2)
-%                             currState=find(subTrajVals==subTrajLbls(relSubjs(currSubj2),currT));
-%                             prevState=find(subTrajVals==subTrajLbls(relSubjs(currSubj2),currT-1));
-%                             HMM(currClass).transMat(currState,prevState)=HMM(currClass).transMat(currState,prevState)+1;
-%                         end
-%                     end
-%                     HMM(currClass).transMat=HMM(currClass).transMat./repmat(sum(HMM(currClass).transMat),nSubtraj,1);
-%                     
-%                     % Compute end-state log likelihoods
-%                     [~,endLogP]=traj.viterbi(CFD(currSubj,:)',HMM(currClass));
-%                     logP(currSubj,currClass)=max(endLogP);
+%                 if mod(currX1,100)==0
+%                     fprintf('%d/%d\n',currX1,size(score,1));
 %                 end
 %             end
-%             % Perform classification
-%             [~,lblsEst]=max(logP,[],2);
-%             lblsEst=lblsEst-1;
-%             BAccFun=@(Yreal,Yest)((sum((Yreal==0).*(Yest==0))/sum(Yreal==0))+(sum((Yreal==1).*(Yest==1))/sum(Yreal==1)))/2;
-%             BAcc=BAccFun(this.lbls,lblsEst);
+%             
+%             % Cluster points
+%             sigma=3*std(reshape(DlowD,[],1));
+%             A=exp(-DlowD./sigma);
+%             A=A.*not(eye(size(A)));
+%             C=dominantset(A);
+            score=evalin('base','score');
+            C=evalin('base','C');
+            subTrajLbls=reshape(C,[],this.nSubjs)';
             
-            % For each subject and each class, compute HMM models (Matlab
-            % (still) has not implemented support for continuous-emission
-            % HMMs, so will discretize data and use discrete emissions)
-            [~,~,discrCFD]=histcounts(reshape(CFD,[],1),'BinMethod','sqrt');
-            discrCFD=reshape(discrCFD,size(CFD,1),[]);
-            for currSubj=1:size(CFD,1)
-                % Warning: the following block of code is for testing the
-                % rest of the algorithm, and it actually overwrites data
-                % with a phantom
-                for currState=1:max(max(subTrajLbls))
-                    CFD(subTrajLbls==currState)=randn(sum(subTrajLbls==currState,'all'),1)*30+currState;
+%             %% WARNING: generating phantom with the next block of code
+%             C1=histcounts(subTrajLbls(this.lbls==0,:),'BinMethod','integer');
+%             C2=histcounts(subTrajLbls(this.lbls==1,:),'BinMethod','integer');
+%             score(ismember(C,find(C1>C2)),nDims/2+1:nDims)=score(ismember(C,find(C1>C2)),1:nDims/2);
+%             score(ismember(C,find(C1<=C2)),nDims/2+1:nDims)=-score(ismember(C,find(C1<=C2)),1:nDims/2);
+%             score(:,nDims/2+1:nDims)=score(:,nDims/2+1:nDims)+randn(size(score(:,nDims/2+1:nDims)))*.01.*repmat(std(score(:,nDims/2+1:nDims)),size(score,1),1);
+            
+            % Recover first dimensions and compute GM model for each
+            % subTraj
+            GM=cell(max(C),1);
+            lblVals=1:max(C);
+            for currSubtraj=1:length(lblVals)
+                relData=score(C==lblVals(currSubtraj),1:nDims);
+                if ~isempty(relData)
+                    GM{lblVals(currSubtraj)}=fitgmdist(relData,1);
                 end
-                sameClassIdx=setdiff(find(this.lbls==this.lbls(currSubj)),currSubj);
-                sameClassIdx=sameClassIdx(randperm(length(sameClassIdx)));
-                CFD(currSubj,:)=CFD(sameClassIdx(1),:);
+            end
+            
+            % Compute transition matrix, prior and distribution stats for
+            % each class
+            nFolds=this.nSubjs;
+            CV=cvpartition(length(this.lbls),'KFold',nFolds);
+            feats=mat2cell(score(:,1:nDims),ones(this.nSubjs,1)*this.seqLength,nDims);
+            logP=zeros(size(feats,1),2);
+            for currFold=1:nFolds
+                trainData=feats(CV.training(currFold));
+                trainClusterLbls=subTrajLbls(CV.training(currFold),:);
+                trainLbls=this.lbls(CV.training(currFold));
+                testData=feats(CV.test(currFold));
                 
-                TR=cell(2,1);
-                E=cell(2,1);
                 for currClass=1:2
-                    % Recovere indexes of subject in classes, excluding test
-                    % subject
-                    relDataIdx=this.lbls==(currClass-1);
-                    relDataIdx(currSubj)=0;
+                    % Recover training cluster lbls only for current class
+                    currClusterLbls=trainClusterLbls(trainLbls==currClass-1,:);
+                    relData=cat(3,trainData{trainLbls==currClass-1});
+                    relData=permute(relData,[3,1,2]);
+                    lbls1D=reshape(currClusterLbls,[],1);
+                    data1D=reshape(relData,[],size(relData,3));
                     
-                    % Generate seq and emission data for current class
-                    subTrajLbls=reshape(cumsum(reshape(trajBreakMat(relDataIdx,:)',[],1)),size(CFD,2),[]);
-                    emitData=discrCFD(relDataIdx,:)';
+                    % Compute distribution stats for each subtraj
+                    for currSubtraj=1:length(lblVals)
+                        if sum(lbls1D==currSubtraj)>nDims
+                            HMM(currClass).GM{currSubtraj}=fitgmdist(data1D(lbls1D==currSubtraj,:),1); %#ok<AGROW>
+                        elseif sum(lbls1D==currSubtraj)>1
+                            % Assume a diagonal covariance matrix if number
+                            % of samples for current label is too low
+                            HMM(currClass).GM{currSubtraj}=gmdistribution(mean(data1D(lbls1D==currSubtraj,:),1),diag(std(data1D(lbls1D==currSubtraj,:),[],1))); %#ok<AGROW>
+                        end
+                    end
+                    HMM(currClass).states=1:max(lblVals);
                     
-                    % Estimate transition and emission matrices
-                    [TR{currClass},E{currClass}]=hmmestimate(emitData,subTrajLbls);
+                    % Compute prior probability of each state
+                    HMM(currClass).prior=histcounts(currClusterLbls(:,1),.5:max(lblVals)+.5);
+                    HMM(currClass).prior=HMM(currClass).prior+min(HMM(currClass).prior(HMM(currClass).prior>0));
+                    HMM(currClass).prior=HMM(currClass).prior/sum(HMM(currClass).prior);
                     
-                     % Estimate transition and emission matrices
-                    [TR{currClass},E{currClass}]=hmmtrain(emitData,TR{currClass},E{currClass});
+                    % Compute transition matrix
+                    HMM(currClass).transMat=zeros(length(lblVals));
+                    for currSubj2=1:size(currClusterLbls,1)
+                        for currT=2:size(currClusterLbls,2)
+                            currState=find(lblVals==trainClusterLbls(currSubj2,currT));
+                            prevState=find(lblVals==trainClusterLbls(currSubj2,currT-1));
+                            HMM(currClass).transMat(currState,prevState)=HMM(currClass).transMat(currState,prevState)+1;
+                        end
+                    end
+                    HMM(currClass).transMat=HMM(currClass).transMat./repmat(sum(HMM(currClass).transMat),length(lblVals),1);
+                    HMM(currClass).transMat(isnan(HMM(currClass).transMat))=0;
                     
-                    % Modify TR and E to take into account the fact that
-                    % first state is not necessarily 1
-                    p=histcounts(subTrajLbls,'Normalization','pdf','BinMethod','integers');
-                    TR{currClass}=[0 p;zeros(size(TR{currClass},1),1) TR{currClass}];
-                    E{currClass}=[zeros(1,size(E{currClass},2)); E{currClass}];
+                    % Remove from transition matrix states with no
+                    % associated GM
+                    for currLbl=1:length(HMM(currClass).GM)
+                        if isempty(HMM(currClass).GM{currLbl})
+                            HMM(currClass).transMat(currLbl,:)=0;
+                            HMM(currClass).transMat(:,currLbl)=0;
+                        end
+                    end
                     
-                    [PSTATES{currClass},LOGPSEQ{currClass},FORWARD{currClass},BACKWARD{currClass},S{currClass}]=hmmdecode(discrCFD(currSubj,:),TR{currClass},E{currClass});
+                    % Compute end-state log likelihoods
+                    for currSubj2=1:length(testData)
+                        relData=testData(currSubj2);
+                        relData=squeeze(cat(2,relData{:}));
+                        [~,endLogP]=traj.viterbi(relData,HMM(currClass));
+                        logP(find(CV.test(currFold),currSubj2,'first'),currClass)=max(endLogP);
+                    end
                 end
+                fprintf('%d/%d\n',currFold,nFolds);
             end
-%             
-%             % Collapse matching lbls: first compute p-values...
-%             p=zeros(max(max(subTrajLbls)));
-%             for currLbls1=1:max(max(subTrajLbls))
-%                 for currLbls2=currLbls1+1:max(max(subTrajLbls))
-%                     [~,p(currLbls1,currLbls2)]=ttest2(CFD(subTrajLbls==currLbls1),CFD(subTrajLbls==currLbls2));
-%                     p(currLbls2,currLbls1)=p(currLbls1,currLbls2);
-%                 end
+            
+            % Perform classification
+            [~,lblsEst]=max(logP,[],2);
+            lblsEst=lblsEst-1;
+            BAccFun=@(Yreal,Yest)((sum((Yreal==0).*(Yest==0))/sum(Yreal==0))+(sum((Yreal==1).*(Yest==1))/sum(Yreal==1)))/2;
+            BAcc=BAccFun(this.lbls,lblsEst);
+            
+            
+%             % Compute curvature on first two PCA dimensions
+%             [~,score]=pca(this.projs);
+%             score=real(score);
+%             curvature=zeros(this.nSubjs,this.seqLength);
+%             for currSubj=1:this.nSubjs
+%                 traj2D=score((currSubj-1)*this.seqLength+1:currSubj*this.seqLength,1:2);
+%                 x=traj2D(:,1);
+%                 y=traj2D(:,2);
+%                 x1=[x(2)-x(1);diff(x)];
+%                 x2=[x1(2)-x1(1);diff(x1)];
+%                 y1=[y(2)-y(1);diff(y)];
+%                 y2=[y1(2)-y1(1);diff(y1)];
+%                 curvature(currSubj,:)=(x1.*y2-y1.*x2)./(x1.^2+y1.^2).^(1.5);
 %             end
-%             % ... then apply Holm-Bonferroni correction
-%             [sortP,Pidx]=sort(reshape(p(triu(ones(size(p)),1)==1),[],1));
-%             k=1;
-%             nTests=max(max(subTrajLbls))*(max(max(subTrajLbls))-1)/2;
-%             while true
-%                 if sortP(k)>.05/(nTests+1-k)
-%                     break
+%             
+%             % Trajectory segmentation
+%             nSamples=3;
+%             trajBreak=cell(size(curvature,1),1);
+%             trajBreakMat=zeros(size(curvature));
+%             for currSubj=1:size(curvature,1)
+%                 [~,trajBreak{currSubj}]=findpeaks(abs(curvature(currSubj,:)),'MinPeakDistance',nSamples);
+%                 trajBreakMat(currSubj,trajBreak{currSubj})=1;
+%                 trajBreakMat(currSubj,1)=1;
+%             end
+%             subTrajLbls=reshape(cumsum(reshape(trajBreakMat',[],1)),size(curvature,2),size(curvature,1))';
+%             
+%             % Recover first dimensions and compute GM model for each
+%             % subTraj
+%             nDims=3;
+%             feats=score(1:nDims,:);
+%             feats=reshape(feats,size(feats,1),this.nSubjs,[]);
+%             feats=permute(feats,[2,3,1]);
+%             feats=num2cell(feats,3);
+%             GM=cell(max(max(subTrajLbls)),1);
+%             for currSubtraj=1:max(max(subTrajLbls))
+%                 relData=feats(subTrajLbls==currSubtraj);
+%                 relData=squeeze(cat(2,relData{:}));
+%                 if size(relData,1)>nDims
+%                     GM{currSubtraj}=fitgmdist(relData,1);
 %                 else
-%                     k=k+1;
+%                     GM{currSubtraj}=GM{currSubtraj-1}; % This will cause subtrajectories too small to be evaluated to be lumped with the previous one
 %                 end
 %             end
 %             
-%             
-%             % For each subject and each class, compute HMM models (Matlab
-%             % (still) has not implemented support for continuous-emission
-%             % HMMs, so will discretize data and use discrete emissions)
-%             for currSubj=1:size(CFD,1)
-%                 for currClass=1:2
-%                     % Only consider data for current class, excluding
-%                     % current subject if relevant
-%                     relDataIdx=this.lbls==(currClass-1);
-%                     relDataIdx(currSubj)=0;
-%                     
-%                     % Estimate starting point for HMM parameters
-%                     stateData=reshape(cumsum(reshape(trajBreakMat(relDataIdx,:)',[],1))',[],size(CFD,2));
-%                     emitData=CFD(relDataIdx,:);
-%                     emitData=permute(emitData,[3 2 1]);
-%                     stateData=permute(stateData,[3 2 1]);
-%                     mu1=zeros(1,max(max(stateData)));
-%                     sigma1=zeros(1,1,max(max(stateData)));
-%                     for currSubTraj=1:max(max(stateData))
-%                         mu1(currSubTraj)=mean(emitData(stateData==currSubTraj));
-%                         sigma1(currSubTraj)=std(emitData(stateData==currSubTraj));
-%                     end
-%                     transmat1=eye(max(max(stateData)));
-%                     transmat1(max(max(stateData))+1:max(max(stateData))+1:end)=1/max(max(stateData));
-%                     transmat1=transmat1./repmat(sum(transmat1),max(max(stateData)),1);
-%                     prior1=histcounts(stateData,'Normalization','pdf','BinMethod','integers');
-%                     mixmat1=mk_stochastic(rand(length(unique(stateData)),1));
-%                     
-%                         
-%                     [mu1,sigma1]=mixgauss_init(length(unique(stateData)),emitData,'full');
-%                     mu1=reshape(mu1,[1 length(unique(stateData)) 1]);
-%                     mixmat1=mk_stochastic(rand(length(unique(stateData)),1));
-%                     prior1=histcounts(stateData,'Normalization','pdf','BinMethod','integers');
-%                     transmat1=mk_stochastic(rand(length(unique(stateData))));
-%                     
-%                     % Start EM with annealing (no idea if this is correct)
-%                     th=1e-2;
-%                     T=1e5;
-%                     counts=0;
-%                     while true
-%                         % Perform one step of EM
-%                         transmatOld=transmat1;
-%                         [~,prior1,transmat1,mu1,sigma1,mixmat1]=mhmm_em(emitData,prior1,transmat1,mu1,sigma1,mixmat1,'max_iter',1);
-%                         
-%                         % Evaluate change
-%                         currChange=max(max(abs(transmatOld-transmat1)));
-%                         
-%                         % Break loop if change is smaller than th for 10
-%                         % consecutive iterations
-%                         if currChange<th
-%                             counts=counts+1;
-%                             if counts==2
-%                                 break
-%                             end
-%                         else
-%                             counts=0;
-%                         end
-%                                                 
-%                         % Perform annealing and change temperature
-%                         prior1=ones(size(prior1))/length(prior1)*(1-(1/T))+prior1*(1/T);
-%                         transmat1=ones(size(transmat1))/size(transmat1,1)*(1-(1/T))+transmat1*(1/T);
-%                         T=.95*T;
-%                         
-%                         fprintf('T: %0.2f, currChange: %0.3f, counts: %d\n',T,currChange,counts);
-%                     end
-%                     HMM(currClass).prior=prior1;
-%                     HMM(currClass).transmat=transmat1; 
-%                     HMM(currClass).mu=mu1; 
-%                     HMM(currClass).sigma=sigma1; 
-%                     HMM(currClass).mixmat=mixmat1;
-%                 end
+%             % "Collapse" subtrajs: cluster params
+%             subtrajFeats=cellfun(@(x)[x.mu,diag(x.Sigma)'],GM,'UniformOutput',false);
+%             subtrajFeats=cat(1,subtrajFeats{:});
+%             Z=linkage(subtrajFeats,'weighted','seuclidean');
+%             C=cluster(Z,'maxclust',40);
+%             newSubTrajLbls=subTrajLbls;
+%             for currSubtraj=1:max(max(subTrajLbls))
+%                 newSubTrajLbls(subTrajLbls==currSubtraj)=C(currSubtraj);
 %             end
-%             
-%             % For each subject, compute HMM model
-%             firstSubTrajLength=cellfun(@(x)x(2)-1,trajBreak);
-%             prior=cell(size(CFD,1),1);
-%             mu=cell(size(CFD,1),1);
-%             sigma=cell(size(CFD,1),1);
-%             T=cell(size(CFD,1),1);
-%             for currSubj=1:size(CFD,1)
-%                 % Compute prior probability of each state (very rough, it
-%                 % is just given by the normalized lengths of first states)
-%                 prior{currSubj}=firstSubTrajLength([1:currSubj-1,currSubj+1:end]);
-%                 prior{currSubj}=prior{currSubj}/sum(prior{currSubj});
-%                 
-%                 subTrajLbls=cumsum(trajBreakMat(currSubj,:));
-%                 T{currSubj}=zeros(sum(trajBreakMat(currSubj,:)));
-%                 for currSubTraj=1:length(trajBreak{currSubj})+1
-%                     % Compute mus and sigmas
-%                     mu{currSubj}(currSubTraj)=mean(CFD(currSubj,subTrajLbls==currSubTraj));
-%                     sigma{currSubj}(currSubTraj)=std(CFD(currSubj,subTrajLbls==currSubTraj));
-%                     
-%                     % Compute transition probabilities
-%                     if currSubTraj~=length(trajBreak{currSubj})+1
-%                         T{currSubj}(currSubTraj,currSubTraj)=sum(subTrajLbls==currSubTraj);
-%                         T{currSubj}(currSubTraj,currSubTraj+1)=1;
-%                         T{currSubj}(currSubTraj,:)=T{currSubj}(currSubTraj,:)/sum(T{currSubj}(currSubTraj,:));
-%                     else
-%                         T{currSubj}(end,end)=1;
-%                     end
-%                 end
-%             end
-%             
-%             % For each subject and each class, compute HMM models (Matlab
-%             % (still) has not implemented support for continuous-emission
-%             % HMMs, so will discretize data and use discrete emissions)
-%             [~,~,discrCFD]=histcounts(reshape(CFD,[],1),'BinMethod','sqrt');
-%             discrCFD=reshape(discrCFD,size(CFD,1),[]);
-%             for currSubj=1:size(CFD,1)
-%                 TR=cell(2,1);
-%                 E=cell(2,1);
-%                 for currClass=1:2
-%                     relDataIdx=this.lbls==(currClass-1);
-%                     relDataIdx(currSubj)=0;
-%                     
-%                     % Generate seq and emission data for current class
-%                     stateData=cumsum(reshape(trajBreakMat(relDataIdx,:)',1,[]));
-%                     emitData=reshape(discrCFD(relDataIdx,:)',1,[]);
-%                     
-%                     % Estimate transition and emission matrices
-%                     [TR{currClass},E{currClass}]=hmmestimate(emitData,stateData);
-%                     
-%                     % Modify TR and E to take into account the fact that
-%                     % first state is not necessarily 1
-%                     p=histcounts(stateData,'Normalization','pdf','BinMethod','integers');
-%                     TR{currClass}=[0 p;zeros(size(TR{currClass},1),1) TR{currClass}];
-%                     E{currClass}=[zeros(1,size(E{currClass},2)); E{currClass}];
-% 
-%                     [PSTATES{currClass},LOGPSEQ{currClass},FORWARD{currClass},BACKWARD{currClass},S{currClass}]=hmmdecode(discrCFD(currSubj,:),TR{currClass},E{currClass});
-%                 end
-%             end
+%             subTrajLbls=newSubTrajLbls;
+%             clear newSubTrajLbls
         end
         
         function n=get.nROIs(this)
@@ -520,23 +416,41 @@ classdef traj < handle
         end
         
         function [x,logP]=viterbi(obs,HMM)
+            missingStates=find(cellfun(@(x)isempty(x),HMM.GM));
             nStates=length(HMM.prior);
             nObs=size(obs,1);
+            T1=zeros(nStates,nObs);
+            T2=T1;
             for currState=1:nStates
-                T1(currState,1)=log(HMM.prior(currState)*normpdf(obs(1),HMM.mu(currState),HMM.sigma(currState)));
-                T2(currState,1)=0;
+                if ~isempty(HMM.GM{currState})
+                    T1(currState,1)=log(HMM.prior(currState)*HMM.GM{currState}.pdf(obs(1,:)));
+                    T2(currState,1)=0;
+                else
+                    T1(currState,1)=-Inf;
+                end
             end
             for currState=1:nStates
-                for currT=2:nObs
-                    currOut=T1(:,currT-1)+log(HMM.transMat(currState,:)')+log(normpdf(obs(currT),HMM.mu(currState),HMM.sigma(currState)));
-                    [T1(currState,currT),T2(currState,currT)]=max(currOut);
+                if ~isempty(HMM.GM{currState})
+                    for currT=2:nObs
+                        currOut=T1(:,currT-1)+log(HMM.transMat(currState,:)')+log(HMM.GM{currState}.pdf(obs(currT,:)));
+                        [T1(currState,currT),T2(currState,currT)]=max(currOut);
+                    end
+                else
+                    T1(currState,2:end)=-Inf;
                 end
             end
             [~,z(nObs)]=max(T1(:,end));
             x(nObs)=HMM.states(z(end));
             for currT=nObs:-1:2
                 z(currT-1)=T2(z(currT),currT);
+                if ismember(z(currT-1),missingStates)
+                    z(currT-1)=z(currT);
+                end
+                try
                 x(currT-1)=HMM.states(z(currT-1));
+                catch
+                    keybord;
+                end
             end
             logP=T1(:,end);
         end
