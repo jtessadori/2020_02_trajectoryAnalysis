@@ -67,11 +67,21 @@ classdef traj < handle
                 end
             else
                 % Define labels and remove unlabeled data
-                HCidx=find(inData.HC_All_lab==0);
-                MSidx=find(ismember(inData.HC_All_lab,[2,3]));
-                this.lbls=cat(1,zeros(length(HCidx),1),ones(length(MSidx),1));
-                inData.cm_all_subj_corr=inData.cm_all_subj_corr(union(HCidx,MSidx));
-                this.FC=inData.cm_all_subj_corr;
+                try
+                    HCidx=find(inData.HC_All_lab==0);
+                    MSidx=find(ismember(inData.HC_All_lab,[2,3]));
+                    this.lbls=cat(1,zeros(length(HCidx),1),ones(length(MSidx),1));
+                    inData.cm_all_subj_corr=inData.cm_all_subj_corr(union(HCidx,MSidx));
+                    this.FC=inData.cm_all_subj_corr;
+                catch
+                    warning('Data path file does not contain lbl information. Trying to recover it from xls file');
+                    num=xlsread(inData.xlsFile);
+                    relLbls=num(:,8);
+                    relLbls(isnan(relLbls))=0;
+                    this.FC=inData.FCs(relLbls~=1); % Excluding RR and bening
+                    relLbls(relLbls==1)=[];
+                    this.lbls=ismember(relLbls,[2,3]);
+                end
             end
         end
         
@@ -92,7 +102,7 @@ classdef traj < handle
             
             % Compute Riemann average of points
             FCs=permute(cat(3,this.FC{:}),[3,1,2]);
-            FCs=FCs+repmat(permute(eye(this.nROIs)*1e-6,[3,1,2]),size(FCs,1),1,1); % Add a small regularization term
+            FCs=FCs+repmat(permute(eye(this.nROIs)*1e-5,[3,1,2]),size(FCs,1),1,1); % Add a small regularization term
             this.RS=riemannSpace(FCs,'cov');
         end
         
@@ -142,7 +152,7 @@ classdef traj < handle
             
             % Plot grouped data
             groups=reshape(this.subTrajLbls',[],1);
-            feats2D=reshape(this.feats,[],3);
+            feats2D=reshape(this.feats,[],size(this.feats,3));
             figure;
             hold on;
             clrs='kycmgr';
@@ -157,13 +167,23 @@ classdef traj < handle
             [C1,edges]=histcounts(groups(lbls1D==0,:),'BinMethod','integer','Normalization','pdf');
             C2=histcounts(groups(lbls1D==1,:),edges,'Normalization','pdf');
             [C1,groupOrdr]=sort(C1,'descend');
-            plot(C1);hold on;plot(C2(groupOrdr))
+            lin1=plot(C1);hold on;lin2=plot(C2(groupOrdr));
             xlabel('Group Idx');ylabel('Fractions of points per group')
-            legend({'Class 1','Class 2'},'Location','best');
             h=findall(gcf,'Type','Line');
             set(h,'LineWidth',1.5)
             set(gca,'LineWidth',1.5,'TickDir','out')
             axis tight
+            
+            % Add very rough confidence intervals
+            C1count=histcounts(groups(lbls1D==0,:),edges,'Normalization','count');
+            C1count=sort(C1count,'descend');
+            p1=patch([1:length(C1),length(C1):-1:1],[(C1count+3*sqrt(C1count))./sum(C1count),(C1count(length(C1):-1:1)-3*sqrt(C1count(length(C1):-1:1)))./sum(C1count)],[0 0 1]);
+            set(p1,'EdgeAlpha',0,'FaceAlpha',.3,'FaceColor',get(lin1,'Color'));
+            C2count=histcounts(groups(lbls1D==1,:),edges,'Normalization','count');
+            p2=patch([1:length(C2),length(C2):-1:1],[(C2count(groupOrdr)+3*sqrt(C2count(groupOrdr)))./sum(C2count),(C2count(groupOrdr(length(C1):-1:1))-3*sqrt(C2count(groupOrdr(length(C1):-1:1))))./sum(C2count)],[0 0 1]);
+            set(p2,'EdgeAlpha',0,'FaceAlpha',.3,'FaceColor',get(lin2,'Color'));
+            legend({'Class 1','Class 2'},'Location','best');
+            
             
             % Plot image of groups in time
             figure;
@@ -171,13 +191,13 @@ classdef traj < handle
             xlabel('Time slice');
             ylabel('Subject');
             
-            % Plot classification results
-            title('Boxplot of balanced classificaiton accuracy')
-            boxplot(this.BAccReps,'labels',' ');
-            h=findall(gcf,'Type','Line');
-            set(h,'LineWidth',1.5)
-            set(gca,'LineWidth',1.5,'TickDir','out')
-            ylabel('BAcc');
+%             % Plot classification results
+%             title('Boxplot of balanced classificaiton accuracy')
+%             boxplot(this.BAccReps,'labels',' ');
+%             h=findall(gcf,'Type','Line');
+%             set(h,'LineWidth',1.5)
+%             set(gca,'LineWidth',1.5,'TickDir','out')
+%             ylabel('BAcc');
         end
         
         function computeD(this,maxDims)
@@ -212,10 +232,11 @@ classdef traj < handle
             % Demean projections, compress outliers and compute PCA
             dProjs=real(projs-repmat(mean(projs,2),1,size(projs,2)));
             cProjs=atan(dProjs./repmat(3*mad(dProjs,1,2),1,size(projs,2))).*repmat(mad(dProjs,1,2),1,size(projs,2))*3;
+%             cProjs=dProjs;
             [~,score]=pca(cProjs');
             
             % Compute distance matrix on smaller number of dimensions
-            if nargin==1
+            if nargin<2
                 maxDims=3;
             end
             score=score(:,1:maxDims);
@@ -230,9 +251,15 @@ classdef traj < handle
                     fprintf('%d/%d\n',currX1,size(score,1));
                 end
             end
-            
+            this.feats=reshape(score,this.seqLength,this.nSubjs,maxDims);
+        end
+        
+        function clusterPoints(this,simScale)
             % Cluster points
-            sigma=3*std(reshape(this.D,[],1));
+            if nargin<2
+                simScale=3;
+            end
+            sigma=simScale*std(reshape(this.D,[],1));
             A=exp(-this.D./sigma);
             A=A.*not(eye(size(A)));
             C=dominantset(A);
@@ -242,7 +269,6 @@ classdef traj < handle
                 C=C+1;
             end
             this.subTrajLbls=reshape(C,[],this.nSubjs)';
-            this.feats=reshape(score,this.seqLength,this.nSubjs,maxDims);
         end
         
         function BAcc=classifyTrajs(this)
@@ -266,6 +292,18 @@ classdef traj < handle
                 end
                 fprintf('%d/%d\n',currSubj,length(this.lbls));
             end
+            
+% dims=2:2:20;
+% scales=[2,3,4,15,40,100,300,500,1000];
+% clear BAcc
+% for currDim=1:length(dims)
+% trajOld.computeD(dims(currDim));
+% for currScale=1:length(scales)
+% trajOld.clusterPoints(scales(currScale));
+% [BAcc(currDim,currScale),logP{currDim,currScale}]=trajOld.HMMclassification;
+% fprintf('Dims: %d/%d, scales: %d/%d\n',currDim,length(dims),currScale,length(scales));
+% end
+% end
             
             % Determine where to put a threshold to attribute classes. This
             % is potentially problematic, as the two classe might be
@@ -336,10 +374,21 @@ classdef traj < handle
                     for currSubj2=1:size(testData,2)
                         relData=squeeze(testData(:,currSubj2,:));
                         currSubjIdx=testSubjIdx(currSubj2);
-%                         [likelyPath,classLogP]=traj.viterbi(relData,HMM(currClass));
-%                         logP(currSubjIdx,currClass)=max(endLogP)+log(sum(this.lbls==currClass-1)/this.nSubjs);
-                        endLogP=log(traj.forward(relData,HMM(currClass)));
-                        logP(currSubjIdx,currClass)=max(endLogP(:,end))+log(sum(this.lbls==currClass-1)/this.nSubjs);
+                        
+                        [likelyPath,classLogP]=traj.viterbi(relData,HMM(currClass));
+                        logP(currSubjIdx,currClass)=classLogP(likelyPath(end),end)+log(sum(this.lbls==currClass-1)/this.nSubjs);
+
+%                         pStates=traj.FB(relData,HMM(currClass));
+%                         pStates=pStates./repmat(sum(pStates,1),size(pStates,1),1);
+%                         logP(currSubjIdx,currClass)=sum(pStates.^2,'all');
+%                         logP(currSubjIdx,currClass)=sum(log(pStates),'all')+log(sum(this.lbls==currClass-1)/this.nSubjs);
+                        
+%                         pObs=zeros(nStates,this.seqLength);
+%                         for currState=1:nStates
+%                             pObs(currState,:)=HMM(currClass).GM{currState}.pdf(relData);
+%                         end
+%                         logP(currSubjIdx,currClass)=log(sum(pStates.*pObs,'all'))+log(sum(this.lbls==currClass-1)/this.nSubjs);
+
                     end
                 end
                 fprintf('%d/%d\n',currFold,nFolds);
@@ -504,7 +553,39 @@ classdef traj < handle
             save(fileName,'dataFolder','-append');
             save(fileName,'slicesPerMat','-append');
             save(fileName,'stepSize','-append');
-            save(fileName,'xlsFile','-append');
+        end
+        
+        function [timeData,lbls]=recoverTimeData(xlsFile,dataFolder)
+            % Recover patient data from xls file
+            [~,~,RAW]=xlsread(xlsFile);
+            f=RAW(1,:);
+            f(cellfun(@(x)~ischar(x),f))=[];
+            s=cell2struct(RAW(2:end,1:length(f)),f,2);
+            
+            % Use recovered data to load patients data
+            lbls=zeros(size(s));
+            timeData=cell(length(s),1);
+            D=dir(dataFolder);
+            for currSubj=1:length(s)
+                for currD=3:length(D)
+                    D2=dir([dataFolder,'\',D(currD).name]);
+                    T=struct2table(D2);
+                    subjIdx=find(cellfun(@(x)strcmp(x,sprintf('%04d',s(currSubj).IDsoggetto)),T.name));
+                    if ~isempty(subjIdx)
+                        subjData=dlmread(sprintf('%s\\%s\\%s\\resting_conn\\AAL116_gm_ROISignals.txt',dataFolder,D(currD).name,D2(subjIdx).name));
+                        break;
+                    end
+                end
+                timeData{currSubj}=subjData;
+                
+                % Recover lables
+                if isempty(s(currSubj).Dis_Prog_2)
+                    lbls(currSubj)=nan;
+                else
+                    lbls(currSubj)=s(currSubj).Dis_Prog_2;
+                end
+                fprintf('%d/%d\n',currSubj,length(s));
+            end
         end
         
         function [x,logP]=viterbi(obs,HMM)
@@ -516,9 +597,9 @@ classdef traj < handle
                 T1(currState,1)=log(HMM.prior(currState)*HMM.GM{currState}.pdf(obs(1,:)));
                 T2(currState,1)=0;
             end
-            for currState=1:nStates
-                for currT=2:nObs
-%                     currOut=T1(:,currT-1)+log(HMM.TR(currState,:)')+log(HMM.GM{currState}.pdf(obs(currT,:)));
+            for currT=2:nObs
+                for currState=1:nStates
+                    %                     currOut=T1(:,currT-1)+log(HMM.TR(currState,:)')+log(HMM.GM{currState}.pdf(obs(currT,:)));
                     currOut=T1(:,currT-1)+log(HMM.TR(:,currState))+log(HMM.GM{currState}.pdf(obs(currT,:)));
                     [T1(currState,currT),T2(currState,currT)]=max(currOut);
                 end
@@ -540,8 +621,8 @@ classdef traj < handle
             for currState=1:nStates
                 alpha(currState,1)=HMM.prior(currState)*HMM.GM{currState}.pdf(obs(1,:));
             end
-            for currState=1:nStates
-                for currT=2:nObs
+            for currT=2:nObs
+                for currState=1:nStates
                     alpha(currState,currT)=HMM.GM{currState}.pdf(obs(currT,:))*sum(HMM.TR(currState,:).*alpha(:,currT-1)');
                 end
             end
@@ -556,6 +637,35 @@ classdef traj < handle
 %                 end
 %                 alpha(:,currT)=alpha(:,currT)./sum(alpha(:,currT));
 %             end
+        end
+        
+        function pStates=FB(obs,HMM)
+            % Forward
+            nStates=length(HMM.prior);
+            nObs=size(obs,1);
+            alpha=zeros(nStates,nObs);
+            scaling=zeros(1,nObs);
+            for currState=1:nStates
+                alpha(currState,1)=HMM.prior(currState)*HMM.GM{currState}.pdf(obs(1,:));
+            end
+            for currT=2:nObs
+                for currState=1:nStates
+                    alpha(currState,currT)=HMM.GM{currState}.pdf(obs(currT,:))*sum(HMM.TR(currState,:).*alpha(:,currT-1)');
+                end
+                scaling(currT)=sum(alpha(:,currT));
+                alpha(:,currT)=alpha(:,currT)./scaling(currT);
+            end
+            
+            % Backward
+            beta=ones(nStates,nObs);
+            for currT=nObs-1:-1:1
+                for currState=1:nStates
+                    beta(currState,currT)=1/scaling(currT+1)*sum(HMM.TR(:,currState).*beta(:,currT+1).*HMM.GM{currState}.pdf(obs(currT+1,:)));
+                end
+            end
+            
+            % Conclude
+            pStates=alpha.*beta;
         end
     end
 end
