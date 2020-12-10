@@ -28,25 +28,34 @@ classdef clusterLayer < nnet.layer.RegressionLayer
             % Define number of max output clusters
             nClusters=10;
             
-            % Compute softmax
-            softMaxFun=@(x)exp((x+1)/2*5)./sum(exp((x+1)/2*5));
-            softmax=softMaxFun(Y(1:nClusters,:,:));
-            
             % Compute fuzzy points
-            softmax2=permute(softmax,[2,1,3]);
-            fPoints=repmat(softmax2,[size(T,1),1,1]).*repmat(T,[1,nClusters,1]);
+%             Y2=permute((Y(1:nClusters,:,:)+1)/2,[2,1,3]);
+%             Y2=Y2./repmat(sum(Y2,2),1,size(Y2,2),1);
+            softMaxFun=@(x)exp(x)./sum(exp(x));
+            Y2=permute(softMaxFun(Y(1:nClusters,:,:)),[2,1,3]);
+            fPoints=repmat(Y2,[size(T,1),1,1]).*repmat(T,[1,nClusters,1]);
+%             semilogy(squeeze(extractdata(max(Y2,[],3))));
+            if any(squeeze(sum(Y2,2))==0)
+                keyboard;
+            end
             
             % Compute cluster centroids
-            centroids=sum(fPoints,3)./repmat(sum(softmax2,3),[size(T,1),1,1]);
+            centroids=sum(fPoints,3)./repmat(sum(Y2,3),[size(T,1),1,1]);
             
             % Centroids should be as far as possible from each other,
             % points should be as close as possible to centroids
-            intraClustDist=mean(sqrt(sum(((fPoints-repmat(centroids,[1,1,size(T,3)])).*repmat(softmax2,[size(T,1),1,1])).^2,1)),'all');
+            intraClustDist=mean(sum(((fPoints-repmat(centroids,[1,1,size(T,3)])).*repmat(Y2,[size(T,1),1,1])).^2,1),'all');
 %             interClustDist=mean(sqrt(sum((repmat(centroids,[1,1,nClusters])-repmat(permute(centroids,[1,3,2]),[1,nClusters,1])).^2)),'all');
-            interClustDist=mean(sqrt(sum((centroids-repmat(mean(centroids,2),1,size(centroids,2))).^2)));
+            interClustDist=mean(sum((centroids-repmat(mean(centroids,2),1,size(centroids,2))).^2));
+            
+            % Compute an L0 penalty norm
+            L0=mean(max(Y2,[],3));
             
             % Define loss
-            loss=intraClustDist/interClustDist;
+%             loss=intraClustDist/interClustDist;%+L0;
+%             fprintf('%0.2f - %0.2f - %0.2f\n',intraClustDist,interClustDist,L0);
+%             fprintf('%0.2f\n',loss);
+            loss=exp(log(intraClustDist)-log(interClustDist));
             if isnan(extractdata(loss))
                 keyboard;
             end
