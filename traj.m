@@ -449,7 +449,7 @@ classdef traj < handle
             dataLbls=categorical(this.lbls);
             
             % Split data into folds
-            nReps=1;
+            nReps=5;
             nFolds=5;
             foldID=ceil((1:length(dataLbls))/(length(dataLbls))*nFolds);
             foldID=foldID(randperm(length(foldID))); 
@@ -472,7 +472,7 @@ classdef traj < handle
                     
                     % Define training options for clustering network
                     batchSize=5;
-                    clusterLayers=load('clusterLayers.mat','clusterLayers');
+                    clusterLayers=load('20_12_10_clusterLayers.mat','clusterLayers');
                     clusterLayers=clusterLayers.clusterLayers;
                     
                     clusterLayers(strcmpi({clusterLayers.Name},'regressionoutput'))=clusterLayer;
@@ -491,9 +491,9 @@ classdef traj < handle
                         'Verbose',false, ...
                         'Plots','training-progress', ... %training-progress
                         'Shuffle','every-epoch', ... % every-epoch
-                        'InitialLearnRate',5e-4, ...
+                        'InitialLearnRate',5e-3, ...
                         'ValidationData',{projs(valIdx),projs(valIdx)}, ...
-                        'ValidationPatience',2, ...
+                        'ValidationPatience',5, ...
                         'ValidationFrequency',1, ...
                         'LearnRateSchedule','piecewise', ...
                         'LearnRateDropPeriod',1, ...
@@ -515,8 +515,8 @@ classdef traj < handle
                     layers(4).Name=clusterNet.Layers(4).Name;
                     
                     % Define training options
-                    untrndNet=load('20_12_10_clusterClassifyNet.mat.mat');
-                    netLayers=untrndNet.layers_1;
+                    untrndNet=load('20_12_10_clusterClassifyNet.mat');
+                    netLayers=untrndNet.untrndNet;
 %                     untrndNet=[layers(1:5);netLayers(7:10)];
                     untrndNet=[layers(1:5);softmaxLayer('Name','softmax_1');netLayers(7:10)];
                     
@@ -555,7 +555,7 @@ classdef traj < handle
                     trndNet{currFold}=trainNetwork(projs(trainIdx),dataLbls(trainIdx),untrndNet,options);
 
 %                     % Define training options
-%                     untrndNet=load('clusterClassifyNet.mat');
+%                     untrndNet=load('clusterClassifyNetDropout.mat');
 %                     untrndNet=untrndNet.layers_1;
 %                     batchSize=150;
 %                     options = trainingOptions('adam', ...
@@ -564,14 +564,14 @@ classdef traj < handle
 %                         'MiniBatchSize',batchSize, ...
 %                         'GradientThreshold',1, ...
 %                         'Verbose',false, ...
-%                         'Plots','training-progress', ... %training-progress
+%                         'Plots','none', ... %training-progress
 %                         'Shuffle','every-epoch', ... % every-epoch
-%                         'InitialLearnRate',5e-4, ...
+%                         'InitialLearnRate',5e-3, ...
 %                         'ValidationData',{projs(valIdx),dataLbls(valIdx)}, ...
 %                         'ValidationFrequency',5,...
-%                         'ValidationPatience',2,...
+%                         'ValidationPatience',20,...
 %                         'LearnRateSchedule','piecewise', ...
-%                         'LearnRateDropPeriod',5, ...
+%                         'LearnRateDropPeriod',10, ...
 %                         'LearnRateDropFactor',0.8, ...
 %                         'L2Regularization', 1e-2);
 %                     
@@ -625,3 +625,66 @@ classdef traj < handle
         end
     end
 end
+
+
+%             nClusterNets=5;
+%             nFolds=5;
+%             foldID=ceil((1:length(dataLbls))/(length(dataLbls))*nFolds);
+%             foldID=foldID(randperm(length(foldID))); 
+%             
+%             % Allocate variables
+%             lblsEst=zeros(size(dataLbls));
+%             scores=zeros(length(dataLbls),2);
+%             trndNet=cell(nFolds,1);
+%             valBAcc=zeros(nFolds,nClusterNets);
+%             testBAcc=zeros(nFolds,nClusterNets);
+%             
+%             % Perform n-fold training
+%             for currFold=1:nFolds
+%                 testIdx=find(foldID==currFold);
+%                 trainIdx=find(foldID~=currFold);
+%                 valIdx=trainIdx(1:3:end);
+%                 trainIdx=setdiff(trainIdx,valIdx);
+%                 
+%                 clusterNet=cell(nClusterNets,1);
+%                 for currClusterNet=1:nClusterNets
+%                     subTrainIdx=trainIdx(randperm(length(trainIdx),round(length(trainIdx)*.9)));
+%                     subValIdx=setdiff(trainIdx,subTrainIdx);
+%                     
+%                     % Define training options for clustering network
+%                     batchSize=5;
+%                     clusterLayers=load('clusterLayers.mat','clusterLayers');
+%                     clusterLayers=clusterLayers.clusterLayers;
+%                     
+%                     clusterLayers(strcmpi({clusterLayers.Name},'regressionoutput'))=clusterLayer;
+%                     
+%                     % Make layer names unique
+%                     for currLayer=1:length(clusterLayers)
+%                         clusterLayers(currLayer).Name=sprintf('%s_%d',clusterLayers(currLayer).Name,currClusterNet);
+%                     end
+% 
+%                     options = trainingOptions('adam', ...
+%                         'ExecutionEnvironment','gpu', ...
+%                         'MaxEpochs',1500, ...
+%                         'MiniBatchSize',batchSize, ...
+%                         'GradientThreshold',1, ...
+%                         'Verbose',false, ...
+%                         'Plots','none', ... %training-progress
+%                         'Shuffle','every-epoch', ... % every-epoch
+%                         'InitialLearnRate',5e-4, ...
+%                         'ValidationData',{projs(subValIdx),projs(subValIdx)}, ...
+%                         'ValidationPatience',2, ...
+%                         'ValidationFrequency',1, ...
+%                         'LearnRateSchedule','piecewise', ...
+%                         'LearnRateDropPeriod',1, ...
+%                         'LearnRateDropFactor',0.99);
+%                     
+%                     % Train clustering network
+%                     clusterNet{currClusterNet}=trainNetwork(projs(subTrainIdx),projs(subTrainIdx),clusterLayers,options);
+%                 end
+%                 
+%                 % Recover layers from trained networks, so far
+%                 untrndNet=load('20_12_10_clusterClassifyNet.mat');
+%                 netLayers=untrndNet.untrndNet;
+%                 preTrndNetLayers=cellfun(@(x)x.Layers(2:end-2),clusterNet,'UniformOutput',false);
+%                 untrndNetLayers=[cat(1,preTrndNetLayers{:});concatenationLayer(1,nClusterNets,'Name','concat');softmaxLayer('Name','softmax_1');netLayers(7:10)];

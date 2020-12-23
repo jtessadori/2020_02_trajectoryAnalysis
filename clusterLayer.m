@@ -55,7 +55,7 @@ classdef clusterLayer < nnet.layer.RegressionLayer
 %             loss=intraClustDist/interClustDist;%+L0;
 %             fprintf('%0.2f - %0.2f - %0.2f\n',intraClustDist,interClustDist,L0);
 %             fprintf('%0.2f\n',loss);
-            loss=exp(log(intraClustDist)-log(interClustDist));
+            loss=exp(log(intraClustDist)-log(interClustDist))+L0;
             if isnan(extractdata(loss))
                 keyboard;
             end
