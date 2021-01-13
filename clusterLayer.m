@@ -21,21 +21,12 @@ classdef clusterLayer < nnet.layer.RegressionLayer
 
             % Layer forward loss function goes here.
             
-            global trMat1
-            global trMat2
-            global cnts1
-            global cnts2
-            
-            % Preserve original dimensions data
-            seqLength=size(T,3);
-            nSeqs=size(T,2);
-            
-            % Recover current class
-            currLbl=T(end,1,1);
+            % Last entries of Y contain data representation after layer 1
+            dataPoints=squeeze(Y(end-2:end,:,:));
             
             % Reshape T and Y
-            T=reshape(T(1:end-1,:,:),[size(T,1)-1,1,size(T,2)*size(T,3)]);
-            Y=reshape(Y(1:end-1,:,:),[size(Y,1)-1,1,size(Y,2)*size(Y,3)]);
+            T=reshape(T(1:end-3,:,:),[size(T,1)-3,1,size(T,2)*size(T,3)]);
+            Y=reshape(Y(1:end-3,:,:),[size(Y,1)-3,1,size(Y,2)*size(Y,3)]);
             
             % Define number of max output clusters
             nClusters=10;
@@ -52,53 +43,35 @@ classdef clusterLayer < nnet.layer.RegressionLayer
             end
             
             % Compute cluster centroids
+%             centroids=sum(fPoints,3)./repmat(sum(Y2,3),[size(dataPoints,1),1,1]);
             centroids=sum(fPoints,3)./repmat(sum(Y2,3),[size(T,1),1,1]);
             
             % Centroids should be as far as possible from each other,
             % points should be as close as possible to centroids
-            intraClustDist=mean(sum(((fPoints-repmat(centroids,[1,1,size(T,3)])).*repmat(Y2,[size(T,1),1,1])).^2,1),'all');
-%             interClustDist=mean(sqrt(sum((repmat(centroids,[1,1,nClusters])-repmat(permute(centroids,[1,3,2]),[1,nClusters,1])).^2)),'all');
-            interClustDist=mean(sum((centroids-repmat(mean(centroids,2),1,size(centroids,2))).^2));
+            clusterWeights=repmat(sum(Y2,3),[nClusters,1]);
+%             interClustDist=mean(squeeze(sqrt(sum((repmat(centroids,[1,1,nClusters])-repmat(permute(centroids,[1,3,2]),[1,nClusters,1])).^2))).*clusterWeights.*clusterWeights','all');
+%             intraClustDist=mean(squeeze(sqrt(sum((repmat(dataPoints,[1,1,nClusters])-repmat(permute(centroids,[1,3,2]),[1,size(dataPoints,2),1])).^2))).*permute(Y2,[3,2,1]),'all');
+
+%             interClustDist=mean(squeeze(sum((repmat(centroids,[1,1,nClusters])-repmat(permute(centroids,[1,3,2]),[1,nClusters,1])).^2)).*clusterWeights.*clusterWeights','all');
+%             intraClustDist=mean(squeeze(sum((repmat(dataPoints,[1,1,nClusters])-repmat(permute(centroids,[1,3,2]),[1,size(dataPoints,2),1])).^2)).*permute(Y2,[3,2,1]),'all');
+
+            interClustDist=mean(squeeze(sum((repmat(centroids,[1,1,nClusters])-repmat(permute(centroids,[1,3,2]),[1,nClusters,1])).^2)).*clusterWeights.*clusterWeights','all');
+            intraClustDist=mean(squeeze(sum((repmat(T,[1,nClusters,1])-repmat(centroids,[1,1,size(T,3)])).^2)).*permute(Y2,[2,3,1]),'all');
+
+%             interClustDist=1;
+%             intraClustDist=1;
             
-            % Compute distance between transition matrices between classes
-            Y2=reshape(permute(Y2,[3,1,2]),nSeqs,seqLength,nClusters);
-            currTrMat=squeeze(sum(repmat(permute(Y2(:,2:end,:),[1,2,4,3]),[1,1,nClusters,1]).*repmat(Y2(:,1:end-1,:),[1,1,1,nClusters]),2)./repmat(sum(Y2(:,1:end-1,:),2),[1,1,1,nClusters]));
-            switch currLbl
-                case 1
-                    if isempty(trMat1)
-                        trMat1=currTrMat;
-                        cnts1=1;
-                    else
-                        trMat1=(trMat1*cnts1+currTrMat)/(cnts1+1);
-                        cnts1=cnts1+1;
-                    end
-                case 2
-                    if isempty(trMat2)
-                        trMat2=currTrMat;
-                        cnts2=1;
-                    else
-                        trMat2=(trMat2*cnts2+currTrMat)/(cnts2+1);
-                        cnts2=cnts2+1;
-                    end
-            end
-%             if isempty(trMat1)||isempty(trMat2)
-                trMatDiff=1;
-%             else
-% %                 trMatDiff=gather(sqrt(sum((trMat1-trMat2).^2,'all'))/nClusters.^2)*1e4+1;
-% %                 trMatDiff=gather(1-sum((trMat1-mean(trMat1,'all')).*(trMat2-mean(trMat2,'all')),'all')/sqrt(sum((trMat1-mean(trMat1,'all')).^2,'all').*sum((trMat2-mean(trMat2,'all')).^2,'all')));
-%                 trMatDiff=gather(1-sum((trMat1-repmat(mean(trMat1),[nClusters,1])).*(trMat2-repmat(mean(trMat2),[nClusters,1])),'all')./sqrt(sum((trMat1-repmat(mean(trMat1),[nClusters,1])).^2,'all').*sum((trMat2-repmat(mean(trMat2),[nClusters,1])).^2,'all')));
-%             end
-            
-%             % Compute an L0 penalty norm
-%             L0=mean(max(Y2,[],3));
+            % Impose that representation must limit distance between
+            % subsequent points. Downplay outliers.
+%             trajSpeed=sum((dataPoints(:,2:end)-dataPoints(:,1:end-1)).^2);
+%             trajSpeed=min(trajSpeed/std(trajSpeed),3)*std(trajSpeed);
+%             trajSpeed=mean(trajSpeed)/mean(var(dataPoints,[],2));
+%             trajSpeed=1;
             
             % Define loss
-%             loss=intraClustDist/interClustDist;%+L0;
-%             fprintf('%0.2f - %0.2f - %0.2f\n',intraClustDist,interClustDist,L0);
-%             fprintf('%0.2f\n',loss);
-%             loss=(exp(log(intraClustDist)-log(interClustDist)))/trMatDiff;
-            loss=intraClustDist/(interClustDist*trMatDiff);
-%             fprintf('%0.4f, %0.4f, %0.4f\n',intraClustDist,interClustDist,trMatDiff);
+%             loss=(intraClustDist/interClustDist)*1e-6+trajSpeed/5;
+            loss=intraClustDist/interClustDist;
+%             fprintf('%0.4f, %0.4f, %0.4f\n',intraClustDist,interClustDist,trajSpeed);
             if isnan(extractdata(loss))
                 keyboard;
             end

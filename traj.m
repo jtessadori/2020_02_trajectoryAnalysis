@@ -314,6 +314,31 @@ classdef traj < handle
             this.lbls=tempLbls;
             this.lbls(toBeRemoved)=[];
         end
+        
+        function fixMultipleClasses(this,classes)
+            % This function fixes data so that only classes with names
+            % matching those in cell classes remain, both in labels and in
+            % actual data). WARNING: this causes loss of data related to
+            % other classes
+            tempLbls=nan(size(this.lbls));
+            for currSubj=1:length(tempLbls)
+                for currClass=1:length(classes)
+                    if ismember(this.lbls(currSubj),classes{currClass})
+                        tempLbls(currSubj)=currClass-1;
+                        break;
+                    end
+                end
+            end
+            toBeRemoved=isnan(tempLbls);
+            this.FC(toBeRemoved)=[];
+            if size(this.feats,2)==length(this.lbls)
+                this.feats(:,toBeRemoved,:)=[];
+            end
+            this.subTrajLbls(toBeRemoved,:)=[];
+            this.age(toBeRemoved)=[];
+            this.lbls=tempLbls;
+            this.lbls(toBeRemoved)=[];
+        end
                 
         function [BAcc,logP]=HMMclassification(this)
             % Compute transition matrix, prior and distribution stats for
