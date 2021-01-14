@@ -14,12 +14,7 @@ for currSubj=1:length(projs)
     for currSample=1:size(trajSmall.FC{currSubj},3)
         projs{currSubj}(:,currSample)=real(trajSmall.RS.project(squeeze(trajSmall.FC{currSubj}(:,:,currSample))));
     end
-%     projs{currSubj}=projs{currSubj}-repmat(projs{currSubj}(:,1),[1,size(projs{currSubj},2)]);
 end
-
-% % Align projections with principal axis
-% [~,score]=pca(cat(2,projs{:})');
-% projs=mat2cell(score',size(score,2),repmat(size(projs{1},2),length(projs),1))';
 
 % Fix data
 dataLbls=categorical(trajSmall.lbls);
@@ -30,11 +25,9 @@ nFolds=5;
 foldID=ceil((1:length(dataLbls))/(length(dataLbls))*nFolds);
 foldID=foldID(randperm(length(foldID)));
 
-lossCorrection=0;
-
 % Allocate variables
 lblsEst=zeros(size(dataLbls));
-scores=zeros(length(dataLbls),2);
+scores=zeros(length(dataLbls),length(unique(trajSmall.lbls)));
 trndNet=cell(nFolds,1);
 valBAcc=zeros(nFolds,nReps);
 testBAcc=zeros(nFolds,nReps);
@@ -42,10 +35,75 @@ lblsEstLog=cell(nFolds,1);
 repBAcc=zeros(nReps,1);
 clustLog=cell(nFolds,nReps);
 classLog=cell(nFolds,nReps);
-targetData=cell(length(dataLbls),1);
-for currSubj=1:length(dataLbls)
-    targetData{currSubj}=[projs{currSubj};zeros(3,size(projs{currSubj},2))];
-end
+
+% untrndNet = [
+%     sequenceInputLayer(3916,"Name","sequence","Normalization","zscore")
+%     fullyConnectedLayer(3,"Name","fc_dim")
+%     tanhLayer("Name","tanh_1")
+%     fullyConnectedLayer(10,"Name","fc_cluster")
+%     tanhLayer("Name","tanh_2")
+%     bilstmLayer(20,"Name","bilstm","OutputMode","last")
+%     fullyConnectedLayer(2,"Name","fc_out")
+%     softmaxLayer("Name","softmax")
+%     classificationLayer("Name","classoutput")];
+
+untrndNet = layerGraph();
+
+tempLayers = sequenceInputLayer(3916,"Name","sequence","Normalization","zscore");
+untrndNet = addLayers(untrndNet,tempLayers);
+
+tempLayers = [
+    fullyConnectedLayer(3,"Name","fc_dim_1")
+    tanhLayer("Name","tanh_1")
+    fullyConnectedLayer(10,"Name","fc_cluster_1")];
+untrndNet = addLayers(untrndNet,tempLayers);
+
+tempLayers = [
+    fullyConnectedLayer(3,"Name","fc_dim_2")
+    tanhLayer("Name","tanh_3")
+    fullyConnectedLayer(10,"Name","fc_cluster_2")];
+untrndNet = addLayers(untrndNet,tempLayers);
+
+tempLayers = [
+    fullyConnectedLayer(3,"Name","fc_dim_5")
+    tanhLayer("Name","tanh_6")
+    fullyConnectedLayer(10,"Name","fc_cluster_5")];
+untrndNet = addLayers(untrndNet,tempLayers);
+
+tempLayers = [
+    fullyConnectedLayer(3,"Name","fc_dim_3")
+    tanhLayer("Name","tanh_4")
+    fullyConnectedLayer(10,"Name","fc_cluster_3")];
+untrndNet = addLayers(untrndNet,tempLayers);
+
+tempLayers = [
+    fullyConnectedLayer(3,"Name","fc_dim_4")
+    tanhLayer("Name","tanh_5")
+    fullyConnectedLayer(10,"Name","fc_cluster_4")];
+untrndNet = addLayers(untrndNet,tempLayers);
+
+tempLayers = [
+    concatenationLayer(1,5,"Name","concat")
+    tanhLayer("Name","tanh_2")
+    bilstmLayer(20,"Name","bilstm","OutputMode","last")
+    fullyConnectedLayer(length(unique(trajSmall.lbls)),"Name","fc_out")
+    softmaxLayer("Name","softmax")
+    classificationLayer("Name","outLayer")];
+untrndNet = addLayers(untrndNet,tempLayers);
+
+% clean up helper variable
+clear tempLayers;
+
+untrndNet = connectLayers(untrndNet,"sequence","fc_dim_1");
+untrndNet = connectLayers(untrndNet,"sequence","fc_dim_2");
+untrndNet = connectLayers(untrndNet,"sequence","fc_dim_5");
+untrndNet = connectLayers(untrndNet,"sequence","fc_dim_3");
+untrndNet = connectLayers(untrndNet,"sequence","fc_dim_4");
+untrndNet = connectLayers(untrndNet,"fc_cluster_5","concat/in1");
+untrndNet = connectLayers(untrndNet,"fc_cluster_3","concat/in5");
+untrndNet = connectLayers(untrndNet,"fc_cluster_2","concat/in4");
+untrndNet = connectLayers(untrndNet,"fc_cluster_4","concat/in2");
+untrndNet = connectLayers(untrndNet,"fc_cluster_1","concat/in3");
 
 % Perform n-fold training
 for currRep=1:nReps
@@ -55,17 +113,17 @@ for currRep=1:nReps
         trainIdx=find(foldID~=currFold);
         valIdx=trainIdx(1:3:end);
         trainIdx=setdiff(trainIdx,valIdx);
-
-        % Load template of classification network and modify it
-        untrndNet=load('21_01_10b_clusterClassifyNet.mat');
-        untrndNet=untrndNet.untrndNet;
-        
-%         untrndNet(6)=lstmLayer(length(unique(trajSmall.lbls)),'OutputMode','last');
         
         % Compute class weights and update last network layer appropriately
         W=1./histcounts(dataLbls(trainIdx),'Normalization','probability');
-        untrndNet(end)=customClassLayer(W,lossCorrection);
-        
+        untrndLayers=untrndNet.Layers;
+        untrndLayers(end)=trajClassLayer(W);
+        untrndLayers(end).Name='outLayer';
+        untrndNet=createLgraphUsingConnections(untrndLayers,untrndNet.Connections);
+
+%         untrndNet(end)=trajClassLayer(W);
+%         untrndNet(end).Name='outLayer';
+
         batchSize=150;
         options = trainingOptions('adam', ...
             'ExecutionEnvironment','gpu', ...
